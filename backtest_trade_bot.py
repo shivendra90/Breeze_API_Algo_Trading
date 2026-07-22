@@ -19,7 +19,7 @@ import datetime as dt
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 try:
     import pandas as pd
@@ -316,8 +316,16 @@ class BacktestChart:
                 go.Scatter(
                     x=[e.timestamp for e in buy_events],
                     y=[e.price for e in buy_events],
-                    mode="markers",
-                    marker=dict(size=10, color="deepskyblue", symbol="triangle-up"),
+                    mode="markers+text",
+                    text=["BUY"] * len(buy_events),
+                    textposition="top center",
+                    textfont=dict(color="#00D1FF", size=11),
+                    marker=dict(
+                        size=16,
+                        color="#00D1FF",
+                        symbol="triangle-up",
+                        line=dict(color="white", width=1.8),
+                    ),
                     name="BUY",
                     customdata=[e.reason for e in buy_events],
                     hovertemplate="<b>BUY</b><br>%{x|%H:%M}<br>Price: %{y:.2f}<br>Reason: %{customdata}<extra></extra>",
@@ -331,8 +339,16 @@ class BacktestChart:
                 go.Scatter(
                     x=[e.timestamp for e in sell_events],
                     y=[e.price for e in sell_events],
-                    mode="markers",
-                    marker=dict(size=10, color="red", symbol="triangle-down"),
+                    mode="markers+text",
+                    text=["SELL"] * len(sell_events),
+                    textposition="bottom center",
+                    textfont=dict(color="#FF4D4F", size=11),
+                    marker=dict(
+                        size=16,
+                        color="#FF4D4F",
+                        symbol="triangle-down",
+                        line=dict(color="white", width=1.8),
+                    ),
                     name="SELL",
                     customdata=[f"{e.reason} | Trade PnL: {e.trade_pnl:.2f}" for e in sell_events],
                     hovertemplate="<b>SELL</b><br>%{x|%H:%M}<br>Price: %{y:.2f}<br>%{customdata}<extra></extra>",
@@ -663,6 +679,27 @@ def resolve_comparison_chart_path(input_path: str, start_date: dt.date, end_date
     return batch_dir / f"backtest_comparison_{start_date.isoformat()}_{end_date.isoformat()}.html"
 
 
+def resolve_strategy_summary_csv_path(input_path: str, start_date: dt.date, end_date: dt.date) -> Path:
+    if input_path:
+        return Path(input_path)
+    batch_dir = backtest_batch_dir(start_date, end_date)
+    return batch_dir / f"backtest_strategy_summary_{start_date.isoformat()}_{end_date.isoformat()}.csv"
+
+
+def resolve_yearly_summary_csv_path(input_path: str, start_date: dt.date, end_date: dt.date) -> Path:
+    if input_path:
+        return Path(input_path)
+    batch_dir = backtest_batch_dir(start_date, end_date)
+    return batch_dir / f"backtest_yearly_summary_{start_date.isoformat()}_{end_date.isoformat()}.csv"
+
+
+def resolve_readable_summary_path(input_path: str, start_date: dt.date, end_date: dt.date) -> Path:
+    if input_path:
+        return Path(input_path)
+    batch_dir = backtest_batch_dir(start_date, end_date)
+    return batch_dir / f"backtest_readable_summary_{start_date.isoformat()}_{end_date.isoformat()}.txt"
+
+
 def parse_strategy_list(primary_strategy: str, compare_strategies: str) -> List[str]:
     if compare_strategies.strip():
         items = [x.strip() for x in compare_strategies.split(",") if x.strip()]
@@ -690,6 +727,12 @@ def build_cli() -> argparse.ArgumentParser:
     parser.add_argument("--backtest-date", default="", help="YYYY-MM-DD. If empty, auto-select by cutoff time.")
     parser.add_argument("--from-date", default="", help="YYYY-MM-DD. Enables batch mode.")
     parser.add_argument("--to-date", default="", help="YYYY-MM-DD. Enables batch mode.")
+    parser.add_argument(
+        "--years",
+        type=int,
+        default=0,
+        help="Backtest the last N years (1 to 5). Enables batch mode with auto date range.",
+    )
     parser.add_argument("--market-cutoff", default="15:20", help="If current time >= cutoff, use today; else previous trading day.")
     parser.add_argument("--start-time", default="09:15")
     parser.add_argument("--end-time", default="15:30")
@@ -704,18 +747,21 @@ def build_cli() -> argparse.ArgumentParser:
     parser.add_argument("--chart-file", default="")
     parser.add_argument("--trades-csv", default="")
     parser.add_argument("--summary-csv", default="")
+    parser.add_argument("--strategy-summary-csv", default="")
+    parser.add_argument("--yearly-summary-csv", default="")
+    parser.add_argument("--readable-summary-txt", default="")
     parser.add_argument("--comparison-chart", default="")
     parser.add_argument("--no-square-off-eod", action="store_true")
     return parser
 
 
 def load_credentials() -> Dict[str, str]:
-    api_key = os.getenv("API_KEY")
-    api_secret = os.getenv("SECRET")
-    session_token = os.getenv("TOKEN")
+    api_key = os.getenv("BREEZE_API_KEY")
+    api_secret = os.getenv("BREEZE_API_SECRET")
+    session_token = os.getenv("BREEZE_SESSION_TOKEN")
     if not api_key or not api_secret or not session_token:
         raise RuntimeError(
-            "Set API_KEY, SECRET and OKEN environment variables"
+            "Set BREEZE_API_KEY, BREEZE_API_SECRET and BREEZE_SESSION_TOKEN environment variables"
         )
     return {"api_key": api_key, "api_secret": api_secret, "session_token": session_token}
 
@@ -739,6 +785,39 @@ def validate_inputs(args: argparse.Namespace) -> None:
     to_set = bool(args.to_date.strip())
     if from_set != to_set:
         raise ValueError("Provide both --from-date and --to-date for batch mode")
+    if args.years and (args.years < 1 or args.years > 5):
+        raise ValueError("--years must be between 1 and 5")
+    if args.years and (from_set or to_set or bool(args.backtest_date.strip())):
+        raise ValueError("--years cannot be combined with --from-date/--to-date or --backtest-date")
+
+
+def shift_years_back(day: dt.date, years: int) -> dt.date:
+    target_year = day.year - years
+    try:
+        return day.replace(year=target_year)
+    except ValueError:
+        return day.replace(year=target_year, day=28)
+
+
+def resolve_year_range(years: int, cutoff: dt.time) -> Tuple[dt.date, dt.date]:
+    end_date = resolve_backtest_date("", cutoff)
+    start_date = shift_years_back(end_date, years) + dt.timedelta(days=1)
+    while start_date.weekday() >= 5:
+        start_date += dt.timedelta(days=1)
+    return start_date, end_date
+
+
+def render_table(headers: List[str], rows: List[List[str]]) -> str:
+    if not rows:
+        return ""
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+    line_sep = "-+-".join("-" * w for w in widths)
+    head = " | ".join(h.ljust(widths[i]) for i, h in enumerate(headers))
+    body = [" | ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)) for row in rows]
+    return "\n".join([head, line_sep, *body])
 
 
 def summarize(events: List[TradeEvent], realized_pnl: float) -> None:
@@ -829,8 +908,11 @@ def run_batch_mode(
     summary_rows: List[Dict[str, Any]] = []
     detailed_trade_rows: List[Dict[str, Any]] = []
     candles_cache: Dict[dt.date, List[Candle]] = {}
+    missing_dates: List[dt.date] = []
 
-    for d in dates:
+    total_days = len(dates)
+    print(f"Fetching candles for {total_days} trading days...")
+    for idx, d in enumerate(dates, start=1):
         candles = client.fetch_day_candles(
             symbol=args.symbol,
             exchange_code=args.exchange,
@@ -840,11 +922,14 @@ def run_batch_mode(
             end_time=end_time,
         )
         candles_cache[d] = candles
+        if not candles:
+            missing_dates.append(d)
+        if idx == total_days or idx % 50 == 0:
+            print(f"  Fetched {idx}/{total_days} days")
 
     for d in dates:
         candles = candles_cache[d]
         if not candles:
-            print(f"Skipping {d.isoformat()} (no candles)")
             continue
 
         for strategy_name in strategies:
@@ -902,6 +987,9 @@ def run_batch_mode(
     end_date = dates[-1]
     summary_csv = resolve_summary_csv_path(args.summary_csv, start_date, end_date)
     comparison_chart = resolve_comparison_chart_path(args.comparison_chart, start_date, end_date)
+    strategy_summary_csv = resolve_strategy_summary_csv_path(args.strategy_summary_csv, start_date, end_date)
+    yearly_summary_csv = resolve_yearly_summary_csv_path(args.yearly_summary_csv, start_date, end_date)
+    readable_summary_txt = resolve_readable_summary_path(args.readable_summary_txt, start_date, end_date)
     trades_csv = Path(args.trades_csv) if args.trades_csv else (
         backtest_batch_dir(start_date, end_date)
         / f"backtest_trades_{start_date.isoformat()}_{end_date.isoformat()}.csv"
@@ -929,19 +1017,152 @@ def run_batch_mode(
         total_wins=("winning_trades", "sum"),
         total_losses=("losing_trades", "sum"),
     )
+    agg["win_rate_pct"] = agg.apply(
+        lambda row: (row["total_wins"] / row["total_trades"] * 100.0) if row["total_trades"] > 0 else 0.0,
+        axis=1,
+    )
+
+    sell_df = pd.DataFrame([r for r in detailed_trade_rows if r["side"] == "SELL"])
+    if not sell_df.empty:
+        trades_by_strategy = (
+            sell_df.groupby("strategy", as_index=False)
+            .agg(
+                avg_trade_pnl=("trade_pnl", "mean"),
+                max_win=("trade_pnl", "max"),
+                max_loss=("trade_pnl", "min"),
+                gross_profit=("trade_pnl", lambda s: float(s[s > 0].sum())),
+                gross_loss=("trade_pnl", lambda s: float(s[s < 0].sum())),
+            )
+        )
+        trades_by_strategy["profit_factor"] = trades_by_strategy.apply(
+            lambda row: (row["gross_profit"] / abs(row["gross_loss"])) if row["gross_loss"] < 0 else float("inf"),
+            axis=1,
+        )
+        agg = agg.merge(
+            trades_by_strategy[["strategy", "avg_trade_pnl", "max_win", "max_loss", "profit_factor"]],
+            on="strategy",
+            how="left",
+        )
+    else:
+        agg["avg_trade_pnl"] = 0.0
+        agg["max_win"] = 0.0
+        agg["max_loss"] = 0.0
+        agg["profit_factor"] = 0.0
+
+    idx_best = summary_df.groupby("strategy")["realized_pnl"].idxmax()
+    idx_worst = summary_df.groupby("strategy")["realized_pnl"].idxmin()
+    best_day = summary_df.loc[idx_best][["strategy", "date", "realized_pnl"]].rename(
+        columns={"date": "best_day", "realized_pnl": "best_day_pnl"}
+    )
+    worst_day = summary_df.loc[idx_worst][["strategy", "date", "realized_pnl"]].rename(
+        columns={"date": "worst_day", "realized_pnl": "worst_day_pnl"}
+    )
+    agg = agg.merge(best_day, on="strategy", how="left").merge(worst_day, on="strategy", how="left")
+    agg = agg.sort_values("total_pnl", ascending=False)
+
+    summary_df["year"] = pd.to_datetime(summary_df["date"]).dt.year
+    yearly_df = (
+        summary_df.groupby(["year", "strategy"], as_index=False)
+        .agg(
+            realized_pnl=("realized_pnl", "sum"),
+            completed_trades=("completed_trades", "sum"),
+            winning_trades=("winning_trades", "sum"),
+            losing_trades=("losing_trades", "sum"),
+        )
+        .sort_values(["year", "strategy"])
+    )
+    yearly_df["win_rate_pct"] = yearly_df.apply(
+        lambda row: (row["winning_trades"] / row["completed_trades"] * 100.0) if row["completed_trades"] > 0 else 0.0,
+        axis=1,
+    )
+
+    strategy_summary_csv.parent.mkdir(parents=True, exist_ok=True)
+    agg.to_csv(strategy_summary_csv, index=False)
+    yearly_summary_csv.parent.mkdir(parents=True, exist_ok=True)
+    yearly_df.to_csv(yearly_summary_csv, index=False)
 
     print(f"Batch range: {start_date.isoformat()} -> {end_date.isoformat()} ({len(dates)} trading days)")
+    if missing_dates:
+        sample = ", ".join(d.isoformat() for d in missing_dates[:5])
+        suffix = " ..." if len(missing_dates) > 5 else ""
+        print(f"No-data trading days skipped: {len(missing_dates)} ({sample}{suffix})")
     print(f"Strategies: {', '.join(strategies)}")
     print(f"Summary CSV: {summary_csv.resolve()}")
     print(f"Detailed trades CSV: {trades_csv.resolve()}")
     print(f"Comparison chart: {comparison_chart.resolve()}")
+    print(f"Strategy summary CSV: {strategy_summary_csv.resolve()}")
+    print(f"Yearly summary CSV: {yearly_summary_csv.resolve()}")
     print("\nAggregate Strategy Summary")
     print("--------------------------")
-    for _, row in agg.sort_values("total_pnl", ascending=False).iterrows():
-        print(
-            f"{row['strategy']}: P&L={row['total_pnl']:.2f}, "
-            f"Trades={int(row['total_trades'])}, Wins={int(row['total_wins'])}, Losses={int(row['total_losses'])}"
+    agg_rows: List[List[str]] = []
+    for _, row in agg.iterrows():
+        profit_factor = row["profit_factor"]
+        profit_factor_text = "inf" if profit_factor == float("inf") else f"{profit_factor:.2f}"
+        agg_rows.append(
+            [
+                str(row["strategy"]),
+                f"{row['total_pnl']:,.2f}",
+                str(int(row["total_trades"])),
+                str(int(row["total_wins"])),
+                str(int(row["total_losses"])),
+                f"{row['win_rate_pct']:.1f}%",
+                f"{row['avg_trade_pnl']:,.2f}",
+                profit_factor_text,
+            ]
         )
+    agg_table = render_table(
+        ["Strategy", "Net P&L", "Trades", "Wins", "Losses", "Win %", "Avg Trade P&L", "Profit Factor"],
+        agg_rows,
+    )
+    print(agg_table)
+
+    yearly_rows: List[List[str]] = []
+    for _, row in yearly_df.iterrows():
+        yearly_rows.append(
+            [
+                str(int(row["year"])),
+                str(row["strategy"]),
+                f"{row['realized_pnl']:,.2f}",
+                str(int(row["completed_trades"])),
+                str(int(row["winning_trades"])),
+                str(int(row["losing_trades"])),
+                f"{row['win_rate_pct']:.1f}%",
+            ]
+        )
+    yearly_table = render_table(
+        ["Year", "Strategy", "Net P&L", "Trades", "Wins", "Losses", "Win %"],
+        yearly_rows,
+    )
+    print("\nYear-wise Strategy Summary")
+    print("--------------------------")
+    print(yearly_table)
+
+    readable_summary_txt.parent.mkdir(parents=True, exist_ok=True)
+    readable_summary_txt.write_text(
+        "\n".join(
+            [
+                f"Backtest range: {start_date.isoformat()} to {end_date.isoformat()} ({len(dates)} trading days)",
+                f"Symbol: {args.symbol} | Exchange: {args.exchange} | Interval: {args.interval}",
+                f"Strategies: {', '.join(strategies)}",
+                (
+                    "Risk config (amount takes precedence over pct): "
+                    f"SL amount={args.stop_loss_amount}, SL pct={args.stop_loss_pct}, "
+                    f"Target amount={args.target_amount}, Target pct={args.target_pct}, "
+                    f"TSL amount={args.trailing_stop_amount}, TSL pct={args.trailing_stop_pct}"
+                ),
+                "",
+                "Aggregate Strategy Summary",
+                "--------------------------",
+                agg_table,
+                "",
+                "Year-wise Strategy Summary",
+                "--------------------------",
+                yearly_table,
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print(f"Readable summary TXT: {readable_summary_txt.resolve()}")
 
 
 def main() -> None:
@@ -961,6 +1182,19 @@ def main() -> None:
     )
 
     strategies = parse_strategy_list(args.strategy, args.compare_strategies)
+
+    if args.years:
+        from_date, to_date = resolve_year_range(args.years, cutoff)
+        dates = trading_days_between(from_date, to_date)
+        run_batch_mode(
+            args=args,
+            client=client,
+            strategies=strategies,
+            dates=dates,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        return
 
     if args.from_date.strip() and args.to_date.strip():
         from_date = parse_date(args.from_date)

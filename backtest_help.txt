@@ -1,4 +1,4 @@
-Run the full command after importing env variables. This will auto download data
+Run the full command after exporting env variables. This will auto download data
 
 BREEZE_API_KEY='...' \
 BREEZE_API_SECRET='...' \
@@ -10,7 +10,7 @@ python /home/omen16/Documents/Repos/portfolio_breeze_api/backtest_trade_bot.py \
   --interval 1minute \
   --strategy sma_crossover \
   --qty 1 \
-  --s top-loss-amount 20 \
+  --stop-loss-amount 20 \
   --target-amount 35 \
   --trailing-stop-amount 15
 
@@ -26,6 +26,29 @@ python /home/omen16/Documents/Repos/portfolio_breeze_api/backtest_trade_bot.py \
   --interval 1minute \
   --from-date 2026-07-01 \
   --to-date 2026-07-09 \
+  --compare-strategies sma_crossover,rsi_mean_reversion,breakout \
+  --qty 1 \
+  --stop-loss-amount 20 \
+  --target-amount 35 \
+  --trailing-stop-amount 15
+
+For multi-year tests (last 1 to 5 years)
+python /home/omen16/Documents/Repos/portfolio_breeze_api/backtest_trade_bot.py \
+  --symbol NIFTY-I \
+  --exchange NSE \
+  --interval 1minute \
+  --years 3 \
+  --compare-strategies sma_crossover,rsi_mean_reversion,breakout \
+  --qty 1 \
+  --stop-loss-amount 20 \
+  --target-amount 35 \
+  --trailing-stop-amount 15
+
+  python /home/omen16/Documents/Repos/portfolio_breeze_api/backtest_trade_bot.py \
+  --symbol NIFTY-I \
+  --exchange NSE \
+  --interval 1minute \
+  --years 3 \
   --compare-strategies sma_crossover,rsi_mean_reversion,breakout \
   --qty 1 \
   --stop-loss-amount 20 \

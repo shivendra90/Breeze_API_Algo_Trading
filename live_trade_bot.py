@@ -351,17 +351,18 @@ class LiveChart:
                 go.Scatter(
                     x=buy_times,
                     y=buy_prices,
-                    mode="markers",
-                    marker=dict(size=10, color="blue", symbol="triangle-up"),
-                    name="BUY",
-                    hovertemplate="<b>BUY</b><br>%{x|%H:%M}<br>Price: %{y:.2f}<br>Reason: "
-                    + "<br>".join(
-                        [
-                            f"{reason}"
-                            for reason in buy_reasons
-                        ]
+                    mode="markers+text",
+                    text=["BUY"] * len(buy_times),
+                    textposition="top center",
+                    textfont=dict(color="#00D1FF", size=11),
+                    marker=dict(
+                        size=16,
+                        color="#00D1FF",
+                        symbol="triangle-up",
+                        line=dict(color="white", width=1.8),
                     ),
-                    text=buy_reasons,
+                    name="BUY",
+                    hovertemplate="<b>BUY</b><br>%{x|%H:%M}<br>Price: %{y:.2f}<br>Reason: %{customdata}<extra></extra>",
                     customdata=buy_reasons,
                 ),
                 row=1,
@@ -376,10 +377,18 @@ class LiveChart:
                 go.Scatter(
                     x=sell_times,
                     y=sell_prices,
-                    mode="markers",
-                    marker=dict(size=10, color="red", symbol="triangle-down"),
+                    mode="markers+text",
+                    text=["SELL"] * len(sell_times),
+                    textposition="bottom center",
+                    textfont=dict(color="#FF4D4F", size=11),
+                    marker=dict(
+                        size=16,
+                        color="#FF4D4F",
+                        symbol="triangle-down",
+                        line=dict(color="white", width=1.8),
+                    ),
                     name="SELL",
-                    hovertemplate="<b>SELL</b><br>%{x|%H:%M}<br>Price: %{y:.2f}<br>Reason: %{customdata}",
+                    hovertemplate="<b>SELL</b><br>%{x|%H:%M}<br>Price: %{y:.2f}<br>Reason: %{customdata}<extra></extra>",
                     customdata=sell_reasons,
                 ),
                 row=1,
